@@ -17,7 +17,7 @@ pub struct ExecuteProposal<'info> {
 
     #[account(
         mut,
-        seeds = [b"treasury", treasury.dao_name.as_bytes()],
+        seeds = [b"treasury", treasury.treasury_mint.as_ref()],
         bump = treasury.bump
     )]
     pub treasury: Account<'info, Treasury>,
@@ -98,7 +98,7 @@ pub fn handler(ctx: Context<ExecuteProposal>) -> Result<()> {
 
     let treasury_seeds: &[&[u8]] = &[
         b"treasury",
-        ctx.accounts.treasury.dao_name.as_bytes(),
+        ctx.accounts.treasury.treasury_mint.as_ref(),
         &[ctx.accounts.treasury.bump],
     ];
 

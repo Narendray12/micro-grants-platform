@@ -13,15 +13,6 @@ pub struct CreateDao<'info> {
     )]
     pub dao: Account<'info, DaoAccount>,
 
-    #[account(
-        init,
-        payer = authority,
-        space = Treasury::SPACE,
-        seeds = [b"treasury", dao_name.as_bytes()],
-        bump
-    )]
-    pub treasury: Account<'info, Treasury>,
-
     #[account(mut)]
     pub authority: Signer<'info>,
 
@@ -30,30 +21,26 @@ pub struct CreateDao<'info> {
 
 pub fn create_dao(
     ctx: Context<CreateDao>,
-    dao_name: String,
-    governance_token_mint: Pubkey
+    governance_token_mint: Pubkey,
+    dao_name: String
 ) -> Result<()> {
     let dao = &mut ctx.accounts.dao;
-    let treasury = &mut ctx.accounts.treasury;
 
     // Validate DAO name length
     require!(
-        dao_name.len() <= DaoAccount::MAX_DAO_NAME_LENGTH,
+        dao_name.len() <= 32,
         ErrorCode::DaoNameTooLong
     );
-
+    let mut name_bytes = [0u8; 32];
+    let name_slice = dao_name.as_bytes();
+    let copy_len = std::cmp::min(name_slice.len(), 32);
+    name_bytes[..copy_len].copy_from_slice(&name_slice[..copy_len]);
+    
     // Initialize DAO account
     dao.authority = ctx.accounts.authority.key();
-    dao.dao_name = dao_name.clone();
-    dao.treasury = treasury.key();
-    dao.treasury_mint = governance_token_mint;
+    dao.dao_name = name_bytes;
     dao.proposal_count = 0;
     dao.bump = ctx.bumps.dao;
-
-    // Initialize Treasury account
-    treasury.dao_name = dao_name;
-    treasury.bump = ctx.bumps.treasury;
-    treasury.balance = 0; // or handle token accounts here
 
     Ok(())
 }
