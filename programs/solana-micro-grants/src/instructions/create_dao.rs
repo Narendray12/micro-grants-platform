@@ -1,8 +1,8 @@
 use anchor_lang::prelude::*;
-use crate::state::{dao::*, Treasury};
+use crate::state::{dao::*};
 
 #[derive(Accounts)]
-#[instruction(dao_name: String, governance_token_mint: Pubkey)]
+#[instruction(dao_name: String)]
 pub struct CreateDao<'info> {
     #[account(
         init, 
@@ -21,12 +21,10 @@ pub struct CreateDao<'info> {
 
 pub fn create_dao(
     ctx: Context<CreateDao>,
-    governance_token_mint: Pubkey,
     dao_name: String
 ) -> Result<()> {
     let dao = &mut ctx.accounts.dao;
 
-    // Validate DAO name length
     require!(
         dao_name.len() <= 32,
         ErrorCode::DaoNameTooLong
@@ -36,7 +34,6 @@ pub fn create_dao(
     let copy_len = std::cmp::min(name_slice.len(), 32);
     name_bytes[..copy_len].copy_from_slice(&name_slice[..copy_len]);
     
-    // Initialize DAO account
     dao.authority = ctx.accounts.authority.key();
     dao.dao_name = name_bytes;
     dao.proposal_count = 0;

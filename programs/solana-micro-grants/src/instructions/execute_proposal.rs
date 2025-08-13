@@ -1,145 +1,98 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, Transfer, TokenAccount};
+use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-use crate::state::{Proposal, ProposalStatus, Treasury};
+use crate::state::{dao::*, proposal::*};
 
 #[derive(Accounts)]
+#[instruction(dao_name: String, proposal_index: u64)]
 pub struct ExecuteProposal<'info> {
-    #[account(mut)]
-    pub executor: Signer<'info>,
-
     #[account(
         mut,
-        has_one = treasury,
-        constraint = proposal.status == ProposalStatus::Approved as u8 @ ErrorCode::ProposalNotApproved
+        seeds = [b"dao", dao_name.as_bytes()],
+        bump = dao.bump
     )]
-    pub proposal: Account<'info, Proposal>,
+    pub dao: Account<'info, DaoAccount>,
 
     #[account(
         mut,
-        seeds = [b"treasury", treasury.treasury_mint.as_ref()],
+        seeds = [b"treasury", dao_name.as_bytes()],
         bump = treasury.bump
     )]
     pub treasury: Account<'info, Treasury>,
 
-    /// CHECK: Validated in handler
-    pub treasury_mint: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        seeds = [b"proposal", dao.key().as_ref(), &proposal_index.to_le_bytes()],
+        bump = proposal.bump
+    )]
+    pub proposal: Account<'info, Proposal>,
 
-    /// CHECK: Will be deserialized in handler
+    /// Treasury's SPL token account holding DAO funds
     #[account(mut)]
-    pub treasury_token_account: UncheckedAccount<'info>,
+    pub treasury_token_account: Account<'info, TokenAccount>,
 
-    /// CHECK: Will be deserialized in handler
+    /// Recipient's SPL token account
     #[account(mut)]
-    pub recipient_token_account: UncheckedAccount<'info>,
+    pub recipient_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
+
+    pub authority: Signer<'info>,
 }
 
-pub fn handler(ctx: Context<ExecuteProposal>) -> Result<()> {
+pub fn execute_proposal(ctx: Context<ExecuteProposal>) -> Result<()> {
+    let dao = &mut ctx.accounts.dao;
+    let treasury = &mut ctx.accounts.treasury;
     let proposal = &mut ctx.accounts.proposal;
-    let clock = Clock::get()?;
-
-    // Validate treasury mint matches proposal
+    let _dao_name = proposal.get_dao_name();
+    let _proposal_index = proposal.proposal_index;
+    // Ensure proposal is approved
     require!(
-        ctx.accounts.treasury_mint.key() == proposal.treasury_mint,
-        ErrorCode::MintMismatch
+        proposal.status == ProposalStatus::Approved as u8,
+        ErrorCode::ProposalNotApproved
+    );
+    require!(
+        proposal.key()
+            == Pubkey::find_program_address(
+                &[
+                    b"proposal",
+                    dao.key().as_ref(),
+                    &_proposal_index.to_le_bytes()
+                ],
+                ctx.program_id
+            )
+            .0,
+        ErrorCode::InvalidProposal
     );
 
-    // Deserialize treasury token account
-    let treasury_token_data = TokenAccount::try_deserialize(
-        &mut &**ctx.accounts.treasury_token_account.try_borrow_data()?
-    )?;
-    require!(
-        treasury_token_data.owner == ctx.accounts.treasury.key(),
-        ErrorCode::InvalidTreasuryAccount
-    );
-    require!(
-        treasury_token_data.mint == ctx.accounts.treasury_mint.key(),
-        ErrorCode::TreasuryMintMismatch
-    );
+    // Transfer tokens from treasury to recipient
+    let seeds = &[b"treasury", &dao.dao_name as &[u8], &[treasury.bump]];
+    let signer = &[&seeds[..]];
 
-    // Deserialize recipient token account
-    let recipient_token_data = TokenAccount::try_deserialize(
-        &mut &**ctx.accounts.recipient_token_account.try_borrow_data()?
-    )?;
-    require!(
-        recipient_token_data.mint == ctx.accounts.treasury_mint.key(),
-        ErrorCode::RecipientMintMismatch
-    );
-    require!(
-        ctx.accounts.recipient_token_account.key() == proposal.recipient,
-        ErrorCode::InvalidRecipient
-    );
-
-    // Check voting deadline
-    require!(
-        clock.unix_timestamp >= proposal.voting_deadline,
-        ErrorCode::VotingStillActive
-    );
-
-    // Check if passed
-    require!(
-        proposal.votes_for > proposal.votes_against,
-        ErrorCode::ProposalDidNotPass
-    );
-
-    // Ensure treasury has balance
-    require!(
-        treasury_token_data.amount >= proposal.amount,
-        ErrorCode::InsufficientTreasuryBalance
-    );
-
-    let transfer_accounts = Transfer {
+    let cpi_accounts = Transfer {
         from: ctx.accounts.treasury_token_account.to_account_info(),
         to: ctx.accounts.recipient_token_account.to_account_info(),
-        authority: ctx.accounts.treasury.to_account_info(),
+        authority: treasury.to_account_info(),
     };
+    let cpi_ctx = CpiContext::new_with_signer(
+        ctx.accounts.token_program.to_account_info(),
+        cpi_accounts,
+        signer,
+    );
 
-    let treasury_seeds: &[&[u8]] = &[
-        b"treasury",
-        ctx.accounts.treasury.treasury_mint.as_ref(),
-        &[ctx.accounts.treasury.bump],
-    ];
-
-    token::transfer(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            transfer_accounts,
-            &[treasury_seeds],
-        ),
-        proposal.amount,
-    )?;
+    token::transfer(cpi_ctx, proposal.amount)?;
 
     proposal.status = ProposalStatus::Executed as u8;
-
-    msg!(
-        "Proposal executed: {} tokens transferred to {}",
-        proposal.amount,
-        ctx.accounts.recipient_token_account.key()
-    );
 
     Ok(())
 }
 
 #[error_code]
 pub enum ErrorCode {
-    #[msg("Proposal has not been approved for execution.")]
+    #[msg("Proposal is not approved for execution.")]
     ProposalNotApproved,
-    #[msg("Treasury token account mismatch.")]
-    InvalidTreasuryAccount,
-    #[msg("Token mint mismatch between treasury and proposal.")]
-    MintMismatch,
-    #[msg("Treasury token account mint mismatch.")]
-    TreasuryMintMismatch,
-    #[msg("Recipient token account mint mismatch.")]
-    RecipientMintMismatch,
-    #[msg("Invalid recipient account.")]
-    InvalidRecipient,
-    #[msg("Treasury has insufficient balance for this transfer.")]
-    InsufficientTreasuryBalance,
-    #[msg("Voting period is still active.")]
-    VotingStillActive,
-    #[msg("Proposal did not pass (more votes against than for).")]
-    ProposalDidNotPass,
+    #[msg("Invalid proposal index.")]
+    InvalidProposalIndex,
+    #[msg("Invalid proposal account provided.")]
+    InvalidProposal,
 }

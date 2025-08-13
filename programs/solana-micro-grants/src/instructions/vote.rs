@@ -1,6 +1,5 @@
 use crate::state::{proposal::*, vote::*};
 use anchor_lang::prelude::*;
-use crate::errors::*;
 #[derive(Accounts)]
 pub struct Vote<'info> {
     #[account(mut)]
@@ -9,7 +8,7 @@ pub struct Vote<'info> {
     #[account(
         init,
         payer = voter,
-        space = 8 + 32 + 32 + 1,
+        space = 8 + 32 + 32 + 1 + 32,
         seeds = [b"vote", proposal.key().as_ref(), voter.key().as_ref()],
         bump
     )]
@@ -27,13 +26,13 @@ pub fn handler(ctx: Context<Vote>, choice: bool) -> Result<()> {
 
     require!(
         proposal.status == ProposalStatus::Active as u8,
-        CustomError::ProposalNotActive
+        ErrorCode::ProposalNotActive
     );
 
     let clock = Clock::get()?;
     require!(
         clock.unix_timestamp <= proposal.voting_deadline,
-        CustomError::VotingClosed
+        ErrorCode::VotingClosed
     );
 
     vote.proposal = proposal.key();
@@ -47,4 +46,12 @@ pub fn handler(ctx: Context<Vote>, choice: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[error_code]
+pub enum ErrorCode {
+    #[msg("Proposal is not active.")]
+    ProposalNotActive,
+    #[msg("Voting period is over.")]
+    VotingClosed,
 }

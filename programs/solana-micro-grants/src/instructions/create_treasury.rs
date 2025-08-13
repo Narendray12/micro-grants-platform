@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use crate::state::{dao::*, treasury::*};
+use crate::state::{ proposal::*};
 
 #[derive(Accounts)]
 #[instruction(dao_name: String)]
@@ -25,7 +25,6 @@ pub fn create_treasury(
 ) -> Result<()> {
     let treasury = &mut ctx.accounts.treasury;
 
-    // Validate DAO name length
     require!(
         dao_name.len() <= 32,
         ErrorCode::DaoNameTooLong
@@ -35,9 +34,9 @@ pub fn create_treasury(
     let copy_len = std::cmp::min(name_slice.len(), 32);
     name_bytes[..copy_len].copy_from_slice(&name_slice[..copy_len]);
     
-    // Initialize DAO account
+    treasury.dao_name = name_bytes;
     treasury.bump = ctx.bumps.treasury;
-    treasury.treasury_mint = ctx.accounts.treasury.key();
+    treasury.treasury_mint = treasury.key();
 
     Ok(())
 }

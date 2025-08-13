@@ -20,14 +20,13 @@ impl Treasury {
     pub const SPACE: usize = 8 + 32 + 32 + 1; // 49 bytes (removed unnecessary 4 bytes)
 }
 
+pub const MAX_CID_LEN: usize = 64;
 #[account]
 pub struct Proposal {
     /// Core identifiers
     pub key: Pubkey,
     pub recipient: Pubkey,
-    pub treasury_mint: Pubkey,
-    pub treasury: Pubkey,
-
+    pub proposal_index: u64,
     /// Financial data
     pub amount: u64,
     pub votes_for: u64,
@@ -39,15 +38,12 @@ pub struct Proposal {
     pub bump: u8,
     /// Fixed-size strings (no length prefixes)
     pub dao_name: [u8; 32], // Reduced from 50
-    pub title: [u8; 64],        // Reduced from 100
-    pub description: [u8; 256], // Reduced from 500
+
+    pub cid: [u8; MAX_CID_LEN],
+    pub cid_len: u8,
 }
 
 impl Proposal {
-    pub const MAX_DAO_NAME_LENGTH: usize = 32;
-    pub const MAX_TITLE_LENGTH: usize = 64;
-    pub const MAX_DESCRIPTION_LENGTH: usize = 256;
-
     pub const SPACE: usize = 8 +   // Discriminator
         32 + // key
         32 + // recipient  
@@ -60,31 +56,28 @@ impl Proposal {
         1 +  // status
         1 +  // bump
         32 + // dao_name (fixed)
-        64 + // title (fixed)
-        256; // description (fixed)
-             // Total: 521 bytes vs original ~800+ bytes
+        MAX_CID_LEN + // cid bytes
+        1 +
+        63; // Padding
+            // Total: 521 bytes vs original ~800+ bytes
+    pub fn set_cid(&mut self, cid_str: &str) {
+        let bytes = cid_str.as_bytes();
+        let n = core::cmp::min(bytes.len(), MAX_CID_LEN);
+        self.cid = [0u8; MAX_CID_LEN];
+        self.cid[..n].copy_from_slice(&bytes[..n]);
+        self.cid_len = n as u8;
+    }
 
+    /// Helper: read CID as &str (unsafe if not valid UTF-8; prefer using raw bytes for hashes)
+    pub fn cid_as_slice(&self) -> &[u8] {
+        &self.cid[..(self.cid_len as usize)]
+    }
     /// Helper to get dao_name as string
     pub fn get_dao_name(&self) -> String {
         String::from_utf8_lossy(&self.dao_name)
             .trim_end_matches('\0')
             .to_string()
     }
-
-    /// Helper to get title as string
-    pub fn get_title(&self) -> String {
-        String::from_utf8_lossy(&self.title)
-            .trim_end_matches('\0')
-            .to_string()
-    }
-
-    /// Helper to get description as string
-    pub fn get_description(&self) -> String {
-        String::from_utf8_lossy(&self.description)
-            .trim_end_matches('\0')
-            .to_string()
-    }
-
     /// Check if voting period is still active
     pub fn is_voting_active(&self) -> bool {
         let current_time = Clock::get().unwrap().unix_timestamp;

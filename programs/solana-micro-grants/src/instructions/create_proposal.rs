@@ -1,5 +1,5 @@
-use anchor_lang::prelude::*;
 use crate::state::{dao::*, proposal::*};
+use anchor_lang::prelude::*;
 
 #[derive(Accounts)]
 pub struct CreateProposal<'info> {
@@ -21,41 +21,31 @@ pub struct CreateProposal<'info> {
     pub system_program: Program<'info, System>,
 }
 
-
 pub fn create_progosal(
     ctx: Context<CreateProposal>,
-    title: String,
-    description: String,
+    cid: String,
     amount: u64,
     recipient: Pubkey,
-    voting_deadline: i64
+    voting_deadline: i64,
 ) -> Result<()> {
     let proposal = &mut ctx.accounts.proposal;
     let dao = &mut ctx.accounts.dao;
-    
-    let mut title_bytes = [0u8; 64];
-    let title_slice = title.as_bytes();
-    let copy_len = std::cmp::min(title_slice.len(), 64);
-    title_bytes[..copy_len].copy_from_slice(&title_slice[..copy_len]);
-
-    let mut description_bytes = [0u8; 256];
-    let description_slice = description.as_bytes();
-    let copy_len = std::cmp::min(description_slice.len(), 256);
-    description_bytes[..copy_len].copy_from_slice(&description_slice[..copy_len]);
-
+    proposal.proposal_index = dao.proposal_count;
+    dao.proposal_count += 1;
     proposal.key = dao.key();
-    proposal.title = title_bytes;
-    proposal.description = description_bytes;
     proposal.recipient = recipient;
     proposal.votes_for = 0;
     proposal.votes_against = 0;
     proposal.status = ProposalStatus::Active as u8;
     proposal.voting_deadline = voting_deadline;
-    proposal.treasury = dao.treasury;
     proposal.amount = amount;
     proposal.bump = ctx.bumps.proposal;
 
-    dao.proposal_count += 1;
+    let bytes = cid.as_bytes();
+    let n = core::cmp::min(bytes.len(), MAX_CID_LEN);
+    proposal.cid = [0u8; MAX_CID_LEN];
+    proposal.cid[..n].copy_from_slice(&bytes[..n]);
+    proposal.cid_len = n as u8;
 
     Ok(())
 }
